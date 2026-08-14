@@ -93,8 +93,8 @@ curl -X POST --data-binary @session.zip \
 | `name` | `session.log` | 文件名(仅展示) |
 | `workspace` | — | 目标工作区:**绝对路径** 或 `original`(沿用日志原始 `cwd`,需本机存在);必填 |
 | `restamp` | `1` | `1` 把事件时间戳平移到当前(置顶显示,保持相对间隔);`0` 保留原始时间 |
-| `sync` | 全部 | 逗号分隔的同步组:`model,preset,permission,sandbox,approval,plan`;未列出的组对应事件会被过滤,其 seq 引用会被同步重写 |
-| `title` | 空 | 自定义标题(空则沿用日志内标题);追加一条 `session/title` 事件 |
+| `sync` | 全部 | 逗号分隔的同步组:`model,preset,permission,sandbox,approval,plan`;未列出的组对应事件会被过滤,其 seq 引用会被同步重写;未知组名返回 `400` |
+| `title` | 空 | 自定义标题(空则沿用日志内标题);按 UTF-8 字节截断到 100;追加一条 `session/title` 事件 |
 | `expectedHash` | 空 | 期望 SHA-256(64 位十六进制);与文件指纹不一致 → `409 hash-mismatch` |
 | `open` | `0` | `1` 导入后立即恢复为活跃会话:向已连接页面实时推送 `host/session-added`(侧栏免刷新),会话立即可用 |
 | `dryRun` | `0` | `1` 只做全部校验与计算,不落盘、不建会话 |
@@ -125,10 +125,12 @@ curl -X POST --data-binary @session.zip \
 
 | 错误码 | 含义 |
 | --- | --- |
+| `400 bad-file` | 文件无法解析(zip 损坏/加密/超限、非合法会话头、版本 ≠ 0、JSON 行损坏) |
+| `400 bad-request` | 参数问题:未知同步组、缺少 workspace 等 |
 | `409 hash-mismatch` | 文件指纹与 `expectedHash` 不一致(疑似被篡改) |
-| `422 structure` | 结构校验存在 error(seq 断裂、未知类型、非法引用等) |
+| `422 structure` | 结构校验存在 error(seq 断裂、未知类型、非法引用等),或导入后装载校验失败(已自动回滚) |
 | `400 workspace` | 目标工作区不存在/不是目录/日志无原始 cwd |
-| `400 bad-request` | 参数缺失或文件不可解析 |
+| `500 workspace-attach` | 工作区挂载失败(已自动回滚) |
 | `503 persistence` / `503 workspace` | 宿主缺少对应服务 |
 
 `resumed: false` 表示 `open=1` 请求了恢复但失败(降级为冷会话,导入本身成功),常见原因是 `agentLoop` 服务不可用或预设组合失败。
@@ -158,3 +160,21 @@ curl -X POST 'http://127.0.0.1:3080/session-import/delete?sessionId=session-14d8
 | `500 internal` | 定位/释放/移除失败 |
 
 > 本插件导入并 `open=1` 恢复的会话由插件持有释放句柄,可安全删除;重启后这些会话回到冷状态,同样可删。
+
+---
+
+## 边界行为速查
+
+| 场景 | 行为 |
+| --- | --- |
+| 上传 > 256 MB | `readBody` 阶段直接断开并报错;浏览器端在选择文件后即拦截 |
+| zip 内单条目解压 > 1 GiB / 加密条目 / 大小与目录声明不符 | `400 bad-file`(防 zip 炸弹与加密包) |
+| zip 无根目录 `session.jsonl` | `400 bad-file`,并列出条目清单 |
+| 会话头 `version ≠ 0`(未来格式) | `400 bad-file` |
+| 日志是导出时快照(末尾 turn 未闭合) | 正常导入;读取时由持久化层自动补闭合事件 |
+| 过滤后事件为空 | `422 structure` |
+| 导入后装载校验失败 | 自动回滚(移除产物 + 解除记账)并返回 `422 structure` |
+| 工作区挂载失败 | 自动回滚并返回 `500 workspace-attach` |
+| `open=1` 恢复失败(如 preset 组合失效) | 导入成功、`resumed: false`,降级为冷会话 |
+| 删除内存活跃但非本插件导入的会话 | `409 live` 拒绝 |
+| 删除本插件导入的活跃会话 | 优雅卸载(页面实时移除)后删除产物 |
