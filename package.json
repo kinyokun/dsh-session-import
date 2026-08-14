@@ -24,5 +24,9 @@
     "plugin"
   ],
   "author": "kinyokun",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {},
+  "engines": {
+    "node": ">=20"
+  }
 }

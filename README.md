@@ -1,34 +1,50 @@
 # dsh-session-import
 
-DSH(DeepSeek Harness)会话日志导入插件:把 `/export` 导出的会话 zip 或裸 `.jsonl` 日志导入为**新的会话**,并在导入时做真实性验证与状态同步。带浏览器端 UI —— 新对话界面「模式选择」右侧的**「导入对话」**按钮 + 完整导入对话框。
+<p align="center">
+  <img alt="license" src="https://img.shields.io/github/license/kinyokun/dsh-session-import">
+  <img alt="version" src="https://img.shields.io/github/package-json/v/kinyokun/dsh-session-import">
+  <img alt="verified" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20%E5%AE%9E%E6%B5%8B-blue">
+  <img alt="zero deps" src="https://img.shields.io/badge/%E8%BF%90%E8%A1%8C%E6%97%B6%E4%BE%9D%E8%B5%96-0-green">
+</p>
 
-- **宿主端(`host.js`)**:`/session-import/*` HTTP 接口(zip/jsonl 解析、结构真实性验证、SHA-256 指纹、导入/预演/删除)
-- **浏览器端(`client.js`)**:hero 界面导入按钮、拖拽/选择文件、验证与同步项预览、导入并打开
+DSH(DeepSeek Harness)会话日志导入插件:把 `/export` 导出的会话 zip 或裸 `.jsonl` 日志导入为**新的会话**,导入前做结构真实性验证与 SHA-256 指纹校验,并可按需同步模型/思考深度/Agent 预设/权限/沙箱等状态。自带浏览器端 UI —— 新对话界面「模式选择」右侧的**「导入对话」**按钮 + 完整导入对话框,导入/删除实时推送到页面,**无需刷新**。
 
----
+## Overview
 
-## 功能特性
+**解决什么问题**:DSH 的 `/export` 产物没有原生的导入通道;会话的"分享 / 迁移 / 备份回灌"只能靠手工摆弄 session 目录。本插件提供一键导入,并在导入前把"这是不是被改过的文件"讲清楚。
 
-| 能力 | 说明 |
+**适合谁**:
+
+- 想在**另一台机器 / 另一个部署**上继续他人会话的人;
+- 想**备份后回灌**、或把一个会话**复制成多个分支**做对照实验的人;
+- 需要**审计会话日志真伪**(是否被删改)的人。
+
+**双面结构**(与 DSH 的 `dsh.client` 插件包约定一致):
+
+| 端 | 文件 | 职责 |
+| --- | --- | --- |
+| 宿主 | `host.js` | `/session-import/*` HTTP 接口:zip/jsonl 解析、结构真实性验证、SHA-256、导入(含 `dryRun` 预演、`open=1` 实时恢复)、删除 |
+| 浏览器 | `client.js` | hero 界面导入按钮、拖拽/选择文件、验证与同步项预览、导入并打开 |
+
+## Compatibility
+
+| 项目 | 声明 |
 | --- | --- |
-| **导入他人会话** | 解析 `/export` 的 `.zip`(自动识别根目录 `session.jsonl`)或裸 `.jsonl`(含 `text-chunks` 等压缩存储行);始终重新分配会话 ID,不覆盖本机会话 |
-| **状态同步** | 可选同步日志中的模型与思考深度(`request/header`)、Agent 预设、权限预设、沙箱模式、审批策略、计划模式;过滤重排后**同步重写**事件顶层与 `data` 内的全部 seq 引用(`sourceEventSeqs`/`surfaceOp`/`messageSeqs`/`inbox.spliced.start`) |
-| **置顶导入** | `restamp=1` 把事件时间戳整体平移到当前(保持相对间隔),导入的会话直接排到列表顶部 |
-| **真实性验证** | 结构一致性检查(seq 连续、事件配对、未知类型、时间戳回退等)+ SHA-256 指纹 + 可选「预期指纹」强校验,不匹配拒绝导入。详见 [docs/security.md](docs/security.md) |
-| **实时可见(免刷新)** | `open=1` 导入后立即把会话恢复为活跃态,宿主通过 `session/created` 事件向所有已连接页面推送 `host/session-added` 帧,侧栏即时出现新会话;删除时同样实时消失 |
-| **自定义标题** | 导入时可指定标题(追加一条 `session/title` 事件),留空则沿用日志内标题 |
-| **投影预热** | 导入后预热投影缓存,侧栏**无需打开会话**即可显示标题等元数据 |
-| **删除/撤销导入** | `POST /session-import/delete` 优雅卸载并移除落盘产物、解除工作区记账 |
+| 支持的 DSH 版本 | **`@deepseek-ai/dsh 0.1.0-rc.6`**(2026-08-14 安装/加载/导入/删除全流程实测) |
+| 已验证环境 | macOS + Node.js 25,`dsh web` profile patch 挂载,zstd 与明文两种持久化编码 |
+| 最后验证日期 | 2026-08-14 |
+| 已知耦合点 | 解析器内置的 `KNOWN_SESSION_EVENT_TYPES` 白名单与开发时构建一致;DSH 升级引入新事件类型后,新格式日志会被判 `error` 拒绝导入(DSH 自身的冷读校验同样会拒绝),届时同步白名单并升级版本即可 |
 
-## 安装
+DSH mainline 变化很快:升级前建议先跑 `test/smoke.sh` 验证。
 
-> 本插件按 DSH 的 profile patch 机制挂载,启动后自动运行,无需手动加载。
+## Install / Uninstall
 
-1. 把本仓库放到 profile 的 `node_modules` 下(包名即目录名):
+### 安装
+
+1. 把本仓库放进 profile 的 `node_modules`(包名即目录名):
 
    ```bash
-   # $DSH_HOME 默认为 ~/.dsh,profile 名按实际部署(此处以 web 为例)
-   PROFILE_DIR=~/.dsh/profiles/web
+   PROFILE_DIR=~/.dsh/profiles/web        # profile 名按实际部署调整
    mkdir -p "$PROFILE_DIR/node_modules/dsh-session-import"
    cp host.js client.js package.json "$PROFILE_DIR/node_modules/dsh-session-import/"
    ```
@@ -41,70 +57,103 @@ DSH(DeepSeek Harness)会话日志导入插件:把 `/export` 导出的会话 zip 
          name: dsh-session-import
    ```
 
-   > 若目录名是 `session-import`,则 `name: session-import`;两种方式等价,取决于第 1 步的目录名。
+   > 目录名用 `session-import` 时写 `name: session-import`,二者等价。
 
-3. 重启 `dsh web`(宿主端代码在模块缓存中,需重启进程生效;launchd 等托管方式会自动拉起)。
-4. **刷新浏览器页面** —— 加载浏览器端插件,新对话界面出现「导入对话」按钮。
+3. 重启 `dsh web`(宿主代码在模块缓存中,需进程重启生效;launchd 等托管方式会自动拉起)。
+4. **刷新浏览器页面** —— 新对话界面出现「导入对话」按钮。
 
-关闭插件:删除 patch 中的 insert 条目,或加一行 `- id: session-import` + `disabled: true`。
+### 升级
 
-## 使用
+覆盖 `host.js` / `client.js` / `package.json` 后重启 `dsh web` 并刷新页面。已导入的会话不受影响。
 
-1. 在新对话界面,点「模式选择」右侧的 **导入对话**;
-2. 拖入或选择 `.zip` / `.jsonl` 文件,等待解析与验证;
-3. 查看**日志概要**与**真实性验证**结果(结构结论 + SHA-256 指纹,可粘贴导出方公布的指纹做强校验);
-4. 勾选要同步的状态(模型/思考深度、Agent 预设、权限预设、沙箱模式、审批策略、计划模式);
-5. 选择目标工作区、置顶时间戳、自定义标题 → **开始导入**;
-6. 导入成功后自动打开新会话,侧栏实时出现(无需刷新)。
+### 禁用
 
-## HTTP API
+在 patch 中追加 `- id: session-import` + `disabled: true`(保留文件,随时可重新启用)。
 
-完整接口文档见 [docs/api.md](docs/api.md)。速览:
+### 彻底移除
 
-| 方法 | 路径 | 作用 |
-| --- | --- | --- |
-| GET | `/session-import/status` | 插件与依赖状态 |
-| POST | `/session-import/analyze` | 解析 + 真实性验证(不落盘) |
-| POST | `/session-import/import` | 执行导入(支持 `dryRun=1` 预演、`open=1` 实时恢复) |
-| POST | `/session-import/delete` | 删除本插件导入的会话产物 |
+删除 patch 中的 insert 条目与 `node_modules/dsh-session-import/` 目录,重启 `dsh web`。已导入的会话日志保留在 DSH 的 sessions 目录中(它们是普通会话,可用 `POST /session-import/delete` 删除或留用)。
 
-## 兼容性与限制
+## Quick start
 
-- **事件类型白名单**:解析器内置了与开发时 DSH 构建一致的 `KNOWN_SESSION_EVENT_TYPES`;未知类型(通常来自更新版本写出的日志)会被判为错误并拒绝导入 —— DSH 的冷读校验同样会拒绝这类日志,提前拦截只是把错误前置到导入时。
-- **子代理与媒体附件**:导出 zip 内 `subagents/` 下的子代理日志与 `media/` 附件会在预览中提示,但**不导入**(后续版本计划支持整树导入)。
-- **快照语义**:导出包是导出时刻的快照;导出后原会话继续产生的消息不在包内,属预期行为。
-- **作者身份**:结构校验 + 指纹能发现多数篡改,但当前 DSH 导出不含签名,**无法证明作者身份**;需要强保证时请配合导出方另行公布的 SHA-256 指纹使用。详见 [docs/security.md](docs/security.md)。
-- **删除保护**:非本插件导入且处于内存活跃态的会话会被删除接口拒绝(`code: live`);本插件导入并恢复的会话可被安全删除(先优雅卸载再移除产物)。
+**图形界面(推荐)**:新对话界面 → 「导入对话」→ 拖入 `.zip`/`.jsonl` → 查看验证结果与可同步项 → 选目标工作区 → 「开始导入」→ 会话实时出现在侧栏并自动打开。
 
-## 开发与测试
+**命令行最小示例**:
 
 ```bash
-# 语法检查
-node --check host.js && node --check client.js
+# 预览与验证(不落盘)
+curl -X POST --data-binary @session.zip \
+  -H 'content-type: application/octet-stream' \
+  'http://127.0.0.1:3080/session-import/analyze?name=session.zip'
 
-# 冒烟测试(需本地 dsh web 运行中,默认 http://127.0.0.1:3080)
-BASE_URL=http://127.0.0.1:3080 bash test/smoke.sh
+# 导入到指定工作区:置顶时间戳、同步全部状态、导入即恢复(页面实时可见)
+curl -X POST --data-binary @session.zip \
+  -H 'content-type: application/octet-stream' \
+  'http://127.0.0.1:3080/session-import/import?name=session.zip&workspace=%2FUsers%2Falice%2Fprojects%2Fdemo&restamp=1&open=1'
+
+# 删除导入产物(测试/撤销)
+curl -X POST 'http://127.0.0.1:3080/session-import/delete?sessionId=session-xxx'
 ```
 
-`test/fixtures/` 提供了一份最小合法日志(`good.jsonl`)与一份被删行篡改的日志(`tampered-gap.jsonl`),用于验证结构校验与指纹逻辑。
+## Configuration
 
-## 目录结构
+本插件**没有持久化设置**;全部行为由导入时的一次性参数控制(接口参数即配置,UI 中的勾选项一一对应):
 
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `workspace` | —(必填) | 目标工作区绝对路径,或 `original`(沿用日志原始 `cwd`,需本机存在) |
+| `restamp` | `1` | 置顶显示:事件时间戳平移到当前,保持相对间隔 |
+| `sync` | 全部 | `model,preset,permission,sandbox,approval,plan` 的逗号子集;未列出的组被过滤,seq 引用自动重写 |
+| `title` | 空 | 自定义标题(UTF-8 截断至 100 字节) |
+| `expectedHash` | 空 | 期望 SHA-256;不匹配拒绝导入(强校验) |
+| `open` | `0` | `1` 导入后立即恢复为活跃会话,侧栏免刷新可见 |
+| `dryRun` | `0` | `1` 只校验与计算,不落盘 |
+
+**资源上限**:上传原始字节 ≤ 256 MB;zip 单条目解压后 ≤ 1 GiB;拒绝加密 zip。
+
+**环境变量**:无。插件不读取任何环境变量,不产生新的持久化文件(导入的会话写入 DSH 自身的会话存储,删除接口可整体移除)。
+
+## Permissions & data
+
+| 维度 | 说明 |
+| --- | --- |
+| 读取 | 仅读取你上传的文件(内存中处理,上限 256 MB);导入校验时读取 DSH 自身的会话存储与工作区注册表 |
+| 写入 | 只写入 DSH 会话持久化目录(目标工作区下的新会话产物)与工作区记账(挂载/解除);删除接口移除自己导入的产物 |
+| 网络 | 无任何出站请求;全部接口走 DSH 本机 webServer 回环地址 |
+| 凭据 | 不接触任何 API Key/凭据;SHA-256 在本地计算 |
+| 删除行为 | 只删除本插件导入的会话;内存活跃且非本插件导入的会话会被拒绝(`409 live`) |
+
+## Troubleshooting
+
+| 现象 | 原因与处理 |
+| --- | --- |
+| `400 bad-file` | 文件不可解析:非 zip/jsonl、zip 损坏/加密/超限、首行不是合法会话头、`version ≠ 0`(未来格式)、JSON 行损坏 —— 换原始导出文件重试 |
+| `409 hash-mismatch` | 文件指纹与「预期 SHA-256」不一致:疑似被篡改,或粘贴的指纹来自另一个文件 |
+| `422 structure` | 结构校验存在 error(seq 断裂/未知类型/非法引用),或导入后装载校验失败 —— 后者已**自动回滚**,不会留下半成品 |
+| `409 live` | 删除目标在内存中活跃且不是本插件导入的:先在界面中离开该会话再删 |
+| `400 workspace` / `500 workspace-attach` | 目标工作区不存在/不是目录;挂载失败会**自动回滚** |
+| `503 persistence / workspace` | 宿主组合缺少对应服务(检查 profile 的 bundle) |
+| `resumed: false` | `open=1` 恢复失败(如 preset 组合失效),导入本身成功,会话为冷状态,刷新列表即可见 |
+| 导入后侧栏没有新会话 | 未用 `open=1` 且页面未刷新:点会话列表的刷新或直接刷新页面 |
+
+**日志位置**:插件告警走宿主 logger(与 `dsh web` 的标准输出/日志文件一致);接口错误都随 HTTP 响应返回,无需翻日志。
+
+**回滚**:导入失败会回滚;已成功的导入用 `POST /session-import/delete` 整体移除;插件本身出问题按「禁用」章节操作即可。
+
+## Development
+
+```bash
+node --check host.js && node --check client.js          # 语法检查
+BASE_URL=http://127.0.0.1:3080 bash test/smoke.sh       # 冒烟测试(无副作用)
+BASE_URL=… SMOKE_IMPORT=1 bash test/smoke.sh            # 追加真实导入 + 删除闭环
 ```
-dsh-session-import/
-├── host.js           # 宿主端插件:路由、zip 解析、验证器、导入/删除
-├── client.js         # 浏览器端插件:导入按钮 + 对话框(经 /plugins/…/client.js 下发)
-├── package.json      # dsh.client 双面插件包声明(exports ./client)
-├── docs/
-│   ├── api.md        # HTTP 接口参考
-│   └── security.md   # 真实性验证与防篡改说明
-├── test/
-│   ├── smoke.sh      # 冒烟测试
-│   └── fixtures/     # 测试日志样本
-├── CHANGELOG.md
-└── LICENSE
-```
 
-## License
+- `test/fixtures/` 提供合法样本与被删行篡改样本,用于验证结构校验与指纹逻辑;
+- 开发调试建议用 `analyze` 与 `dryRun=1`(不落盘),再用 `open=1` + `delete` 做完整闭环;
+- 贡献:欢迎 issue / PR;改动请同步更新 `CHANGELOG.md` 并跑通冒烟测试。
 
-[MIT](LICENSE) © 2026 kinyokun
+## License & security
+
+- 许可证:[MIT](LICENSE) © 2026 kinyokun
+- 安全报告:见 [SECURITY.md](SECURITY.md)(请勿在公开 issue 中贴敏感内容)
+- 能力边界(诚实声明):结构验证 + SHA-256 指纹能发现多数篡改,但当前 DSH 导出**不含签名,无法证明作者身份**;需要不可伪造的保证时,配合导出方另行公布的指纹使用,或等待导出端签名能力。详见 [docs/security.md](docs/security.md)
