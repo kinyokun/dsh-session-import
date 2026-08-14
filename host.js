@@ -36,6 +36,10 @@ export const inject = ['webServer'];
 export const version = '1.0.0';
 
 const MAX_BODY_BYTES = 256 * 1024 * 1024;
+/** 单个 ZIP 条目解压后的大小上限(防御 zip 炸弹)。 */
+const MAX_ENTRY_BYTES = 1024 * 1024 * 1024;
+/** 自定义标题的 UTF-8 字节上限(低于会话标题服务的 maxTitleBytes)。 */
+const MAX_TITLE_BYTES = 100;
 
 /** 本构建可解读的事件类型(与 dsh-session 生成的 KNOWN_SESSION_EVENT_TYPES 一致)。 */
 const KNOWN_TYPES = new Set([
@@ -74,9 +78,14 @@ function hasExactKeys(record, keys) {
 }
 
 function sendJson(res, status, body) {
-  const text = JSON.stringify(body);
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
-  res.end(text);
+  try {
+    if (res.writableEnded || res.destroyed) return;
+    const text = JSON.stringify(body);
+    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(text);
+  } catch {
+    // 连接已断开等,忽略
+  }
 }
 
 function errorMessage(error) {
@@ -131,13 +140,17 @@ function readZipArchive(buf) {
   let p = cdOffset;
   for (let n = 0; n < count; n += 1) {
     if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50) throw new Error('ZIP 中央目录损坏');
+    const flags = buf.readUInt16LE(p + 8);
     const method = buf.readUInt16LE(p + 10);
     const compSize = buf.readUInt32LE(p + 20);
+    const uncompSize = buf.readUInt32LE(p + 24);
     const nameLen = buf.readUInt16LE(p + 28);
     const extraLen = buf.readUInt16LE(p + 30);
     const commentLen = buf.readUInt16LE(p + 32);
     const localOffset = buf.readUInt32LE(p + 42);
     const entryName = buf.toString('utf8', p + 46, p + 46 + nameLen);
+    if ((flags & 0x1) !== 0) throw new Error(`ZIP 条目 "${entryName}" 已加密,不支持加密压缩包`);
+    if (uncompSize > MAX_ENTRY_BYTES) throw new Error(`ZIP 条目 "${entryName}" 解压后超过 ${Math.round(MAX_ENTRY_BYTES / 1048576)} MB 上限`);
     if (localOffset + 30 > buf.length || buf.readUInt32LE(localOffset) !== 0x04034b50) {
       throw new Error(`ZIP 条目 "${entryName}" 本地头损坏`);
     }
@@ -149,6 +162,7 @@ function readZipArchive(buf) {
     let data = buf.subarray(dataStart, dataEnd);
     if (method === 8) data = inflateRawSync(data);
     else if (method !== 0) throw new Error(`ZIP 条目 "${entryName}" 使用不支持的压缩方法 ${method}`);
+    if (data.length !== uncompSize) throw new Error(`ZIP 条目 "${entryName}" 解压后大小与目录声明不符(文件损坏)`);
     files.set(entryName, Buffer.from(data));
     p += 46 + nameLen + extraLen + commentLen;
   }
@@ -226,7 +240,7 @@ function expandRecord(record) {
 function isHeaderLine(value) {
   return isRecord(value)
     && value.type === 'session'
-    && typeof value.version === 'number'
+    && value.version === 0
     && typeof value.id === 'string'
     && typeof value.createdAt === 'number' && Number.isSafeInteger(value.createdAt) && value.createdAt >= 0
     && typeof value.delegationDepth === 'number' && Number.isSafeInteger(value.delegationDepth) && value.delegationDepth >= 0
@@ -240,6 +254,16 @@ function isHeaderLine(value) {
  * @param {string} fileName - 客户端文件名(仅用于错误信息)。
  */
 function parseUpload(body, fileName) {
+  try {
+    return parseUploadInner(body, fileName);
+  } catch (error) {
+    // 已带 HTTP 语义的错误原样抛出,其余一律按 400 bad-file(客户端传入的文件问题)
+    if (typeof error?.statusCode === 'number') throw error;
+    throw httpError(400, errorMessage(error), 'bad-file');
+  }
+}
+
+function parseUploadInner(body, fileName) {
   const extras = { subagentLogs: 0, mediaFiles: 0 };
   let text;
   if (body.length >= 4 && body.readUInt32LE(0) === 0x04034b50) {
@@ -267,7 +291,7 @@ function parseUpload(body, fileName) {
   } catch (error) {
     throw new Error(`首行无法解析为 JSON: ${errorMessage(error)}`);
   }
-  if (!isHeaderLine(header)) throw new Error('首行不是合法的 DSH 会话头(type: "session" 元数据行)');
+  if (!isHeaderLine(header)) throw new Error('首行不是合法的 DSH 会话头(type: "session" 元数据行,version 0)');
   const events = [];
   for (let i = 1; i < lines.length; i += 1) {
     const line = lines[i].trim();
@@ -288,6 +312,19 @@ function capList(list, max = 12) {
   const head = list.slice(0, max);
   head.push(`…共 ${list.length} 条`);
   return head;
+}
+
+/** 按 UTF-8 字节数截断(不切断多字节字符),用于自定义标题。 */
+function truncateTitleUtf8(text, maxBytes) {
+  let bytes = 0;
+  let out = '';
+  for (const ch of text) {
+    const size = Buffer.byteLength(ch, 'utf8');
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    out += ch;
+  }
+  return out.trimEnd();
 }
 
 /**
@@ -572,6 +609,36 @@ function rewriteReferences(event, remapRef) {
 }
 
 /**
+ * 回滚一次已落盘的导入:解除工作区记账 + 移除持久化产物。
+ * 尽力而为(任何一步失败都只记录日志),供挂载失败/装载校验失败时使用。
+ */
+async function rollbackImported(ctx, id, cwd) {
+  try {
+    const workspaceRegistry = ctx.get('workspaceRegistry');
+    if (workspaceRegistry !== undefined) {
+      const workspace = await workspaceRegistry.resolveByPath(cwd);
+      if (workspace !== undefined) await workspace.detachSession(id);
+    }
+  } catch (error) {
+    ctx.logger?.warn?.(`session-import: rollback detach failed: ${errorMessage(error)}`);
+  }
+  try {
+    const sessionPersistence = ctx.get('sessionPersistence');
+    if (sessionPersistence !== undefined) {
+      const headers = await sessionPersistence.list();
+      const meta = headers.find((header) => header.id === id);
+      const location = meta === undefined ? undefined : sessionPersistence.locate?.(meta);
+      if (location !== undefined && typeof location.path === 'string' && location.path !== ''
+        && /(^|[/\\])session\.jsonl(\.zstd)?$/.test(location.path)) {
+        await rm(dirname(location.path), { recursive: true, force: true });
+      }
+    }
+  } catch (error) {
+    ctx.logger?.warn?.(`session-import: rollback artifact removal failed: ${errorMessage(error)}`);
+  }
+}
+
+/**
  * 执行导入。options 通过查询参数传入:
  *   workspace: 目标工作区绝对路径 | 'original'(沿用日志原始 cwd,须在本机存在)
  *   restamp: '1'|'0'  时间戳平移到当前(默认 1)
@@ -602,6 +669,11 @@ async function applyImport(ctx, body, fileName, query) {
   const restamp = query.restamp !== '0';
   const syncParam = typeof query.sync === 'string' ? query.sync : Object.keys(SYNC_GROUPS).join(',');
   const enabled = new Set(syncParam.split(',').map((s) => s.trim()).filter((s) => s !== ''));
+  for (const group of enabled) {
+    if (!Object.hasOwn(SYNC_GROUPS, group)) {
+      throw httpError(400, `未知的同步组 "${group}"(可用: ${Object.keys(SYNC_GROUPS).join(', ')})`, 'bad-request');
+    }
+  }
   const dropTypes = new Set(
     Object.entries(SYNC_GROUPS)
       .filter(([group]) => !enabled.has(group))
@@ -660,7 +732,7 @@ async function applyImport(ctx, body, fileName, query) {
     rewriteReferences(event, remapRef);
   }
 
-  const customTitle = typeof query.title === 'string' ? query.title.trim() : '';
+  const customTitle = truncateTitleUtf8(typeof query.title === 'string' ? query.title.trim() : '', MAX_TITLE_BYTES);
   if (customTitle !== '') {
     const tailTime = kept.length > 0 ? kept[kept.length - 1].time : header.createdAt + shift;
     kept.push({
@@ -707,9 +779,15 @@ async function applyImport(ctx, body, fileName, query) {
   await sessionPersistence.create(newHeader);
   await sessionPersistence.append(newHeader.id, kept);
 
-  let workspace = await workspaceRegistry.resolveByPath(targetCwd);
-  if (workspace === undefined) workspace = await workspaceRegistry.create(targetCwd);
-  await workspace.attachSession(newHeader.id);
+  // 工作区挂载失败时回滚(避免留下孤立会话产物)
+  try {
+    let workspace = await workspaceRegistry.resolveByPath(targetCwd);
+    if (workspace === undefined) workspace = await workspaceRegistry.create(targetCwd);
+    await workspace.attachSession(newHeader.id);
+  } catch (error) {
+    await rollbackImported(ctx, newHeader.id, targetCwd);
+    throw httpError(500, `挂载工作区失败,已回滚: ${errorMessage(error)}`, 'workspace-attach');
+  }
 
   // 预热投影缓存,让会话列表立即显示标题/模型等元数据(失败不影响导入结果)
   try {
@@ -717,6 +795,15 @@ async function applyImport(ctx, body, fileName, query) {
     if (projectionCache !== undefined) await projectionCache.coldSnapshot(newHeader.id);
   } catch (error) {
     ctx.logger?.warn?.(`session-import: projection warm-up failed: ${errorMessage(error)}`);
+  }
+
+  // 装载校验:用持久化层的真实读取路径完整回放并校验一遍(runtime 级校验,
+  // 含恢复修复),保证导入的会话一定可打开;失败则回滚。
+  try {
+    await sessionPersistence.load(newHeader.id);
+  } catch (error) {
+    await rollbackImported(ctx, newHeader.id, targetCwd);
+    throw httpError(422, `导入后装载校验失败,已回滚: ${errorMessage(error)}`, 'structure');
   }
 
   // open=1:恢复为活跃会话。store 的 session/created 事件会被 api 网关转成

@@ -293,6 +293,10 @@ window.__ModuleLoader__.load({
 
       const pickFile = React.useCallback((selected) => {
         if (selected === null) return;
+        if (selected.size > 256 * 1024 * 1024) {
+          setError('文件超过 256 MB 上传上限,请确认选择的是会话导出文件(.zip / .jsonl)');
+          return;
+        }
         setFile(selected);
         selected.arrayBuffer().then((buffer) => {
           const bytes = new Uint8Array(buffer);
