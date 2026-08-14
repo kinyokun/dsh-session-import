@@ -2,6 +2,12 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式,版本号遵循语义化版本。
 
+## [1.0.1] - 2026-08-14
+
+### Fixed
+
+- 修复客户端同步项默认值 bug:宿主 `analyze` 返回的预设字段名为 `agentPreset`,而客户端按 `preset` 读取,导致「Agent 预设(模式)」勾选框**永远默认不勾选**,导入后会话丢失 `agent-preset/selected` 事件、模式显示回落为头部预设(如 标准模式)。现在 `syncValueOf` 会把 `preset` 键映射到 `agentPreset` 字段,默认正确勾选。
+
 ## [1.0.0] - 2026-08-14
 
 首个公开版本。

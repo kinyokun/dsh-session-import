@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-import",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DSH 会话日志导入插件：解析 /export 导出的 .zip 或裸 .jsonl，做结构真实性验证与 SHA-256 指纹校验，按需同步模型/思考深度/Agent 预设/权限/沙箱/审批等状态，并在新对话界面提供「导入对话」按钮；导入/删除实时推送到页面，无需刷新。",
   "type": "module",
   "main": "host.js",

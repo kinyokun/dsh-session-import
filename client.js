@@ -200,7 +200,8 @@ window.__ModuleLoader__.load({
     ];
 
     function syncValueOf(sync, key) {
-      const value = sync[key];
+      // 宿主 analyze 返回的同步信息字段名为 agentPreset,而同步组键名是 preset
+      const value = sync[key === 'preset' ? 'agentPreset' : key];
       if (value === null || value === undefined || value === '') return null;
       if (key === 'model') {
         const parts = [value.model, value.provider].filter(Boolean);
