@@ -8,7 +8,7 @@
  *    → 选择目标工作区、置顶时间戳、自定义标题 → 导入并打开会话。
  */
 window.__ModuleLoader__.load({
-  id: 'session-import',
+  id: 'dsh-session-import',
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;

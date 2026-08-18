@@ -39,7 +39,13 @@ DSH mainline 变化很快:升级前建议先跑 `test/smoke.sh` 验证。
 
 ## Install / Uninstall
 
-### 安装
+### 从GitHub安装
+
+```bash
+dsh plugin --profile web add github:kinyokun/dsh-session-import
+```
+
+### 从源码安装
 
 1. 把本仓库放进 profile 的 `node_modules`(包名即目录名):
 
