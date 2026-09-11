@@ -3,7 +3,7 @@
  *
  * 1) 在新对话界面(hero)的模式选择(Agent 预设芯片)右侧注入"导入对话"按钮;
  * 2) 点击打开导入对话框:选择 .zip/.jsonl → 宿主解析 + 真实性验证
- *    (结构一致性 + SHA-256 指纹,可选预期指纹强校验) → 勾选要同步的状态
+ *    (结构一致性 + SHA-256 指纹,可选预期指纹强校验) → 查看保留的状态
  *    (模型/思考深度、Agent 预设、权限预设、沙箱模式、审批策略、计划模式)
  *    → 选择目标工作区、置顶时间戳、自定义标题 → 导入并打开会话。
  */
@@ -215,7 +215,7 @@ window.__ModuleLoader__.load({
     function analyzeFile(bytes, fileName) {
       const params = new URLSearchParams();
       params.set('name', fileName);
-      return fetch(`/session-import/analyze?${params.toString()}`, {
+      return fetch(`/api/session-import/analyze?${params.toString()}`, {
         method: 'POST',
         headers: { 'content-type': 'application/octet-stream' },
         body: bytes,
@@ -230,10 +230,10 @@ window.__ModuleLoader__.load({
       // open=1:导入后立即恢复为活跃会话,宿主向所有页面推送 session-added 帧,
       // 侧栏无需刷新即可看到新会话
       params.set('open', '1');
-      params.set('sync', SYNC_KEYS.filter((group) => options.sync[group.key]).map((group) => group.key).join(','));
+      // State events are preserved in full; the official catalog owns their format.
       if (typeof options.title === 'string' && options.title.trim() !== '') params.set('title', options.title.trim());
       if (typeof options.expectedHash === 'string' && options.expectedHash.trim() !== '') params.set('expectedHash', options.expectedHash.trim());
-      return fetch(`/session-import/import?${params.toString()}`, {
+      return fetch(`/api/session-import/import?${params.toString()}`, {
         method: 'POST',
         headers: { 'content-type': 'application/octet-stream' },
         body: bytes,
@@ -270,8 +270,6 @@ window.__ModuleLoader__.load({
           if (!response.ok || data === null || data.ok !== true) {
             throw new Error(data?.error?.message ?? `解析失败(HTTP ${response.status})`);
           }
-          const sync = {};
-          for (const group of SYNC_KEYS) sync[group.key] = syncValueOf(data.preview.sync, group.key) !== null;
           const defaultWorkspace = items.find((item) => item.workspaceId === recentId)?.path
             ?? items[0]?.path
             ?? (typeof data.preview.provenance.cwd === 'string' ? 'original' : '');
@@ -280,7 +278,6 @@ window.__ModuleLoader__.load({
           setOptions({
             workspace: defaultWorkspace,
             restamp: true,
-            sync,
             expectedHash: '',
             title: '',
           });
@@ -318,17 +315,19 @@ window.__ModuleLoader__.load({
           if (!response.ok || data === null || data.ok !== true) {
             throw new Error(data?.error?.message ?? `导入失败(HTTP ${response.status})`);
           }
-          setResult(data);
+
           if (typeof data.sessionId === 'string' && data.sessionId !== '') {
             try {
-              await Promise.allSettled([sessions.refresh(), workspaces.refresh()]);
+              await sessions.refresh();
               sessions.open(data.sessionId);
+              data.opened = true;
             } catch (openError) {
-              console.error('[session-import] open failed:', openError);
+              data.opened = false;
+              data.warnings = [...(data.warnings ?? []), `自动打开失败：${openError.message ?? openError}。可从侧栏打开已导入会话。`];
             }
           }
+          setResult({ ...data });
           setPhase('done');
-          setTimeout(() => onClose(), 1400);
         } catch (err) {
           setError(String(err && err.message ? err.message : err));
           setPhase('preview');
@@ -372,14 +371,14 @@ window.__ModuleLoader__.load({
         if (p === null || verification === null || options === null) return null;
         const syncGroups = SYNC_KEYS.filter((group) => syncValueOf(p.sync, group.key) !== null);
         const anomalies = [
-          ...verification.errors.map((text) => ({ text, kind: 'err' })),
-          ...verification.warnings.map((text) => ({ text, kind: 'warn' })),
+          ...verification.errors.map((text) => ({ text: text.message ?? text, kind: 'err' })),
+          ...verification.warnings.map((text) => ({ text: text.message ?? text, kind: 'warn' })),
         ];
 
         const verdictBadge = verification.verdict === 'ok'
           ? h('span', { className: 'dsh-session-import-badge ok' }, '✓ 结构一致性检查通过')
-          : verification.verdict === 'warn'
-            ? h('span', { className: 'dsh-session-import-badge warn' }, `⚠ 结构一致性: ${anomalies.length} 个可疑点`)
+          : verification.verdict === 'warning'
+            ? h('span', { className: 'dsh-session-import-badge warn' }, `⚠ ${anomalies.length} 条导入提示`)
             : h('span', { className: 'dsh-session-import-badge error' }, `✕ 结构错误: ${verification.errors.length} 处(不可导入)`);
 
         const summaryRows = [
@@ -388,11 +387,11 @@ window.__ModuleLoader__.load({
             '原始会话: ', h('span', { className: 'mono' }, p.provenance.originalId),
             ' · 创建于 ', formatTime(p.provenance.createdAt)),
           h('div', { className: 'dsh-session-import-row' },
-            `共 ${p.counts.user} 条用户消息 / ${p.counts.assistant} 条助手消息 / ${p.counts.toolCall} 次工具调用 / ${p.counts.turn} 个轮次 · ${p.eventCount} 个事件 · ${formatBytes(p.byteLength)}`),
+            `共 ${p.counts.user} 条用户消息 / ${p.counts.assistant} 条助手消息 / ${p.counts.tool} 次工具调用 / ${p.counts.turn} 个轮次 · ${p.eventCount} 个事件 · ${formatBytes(p.byteLength)}`),
         ];
-        if (p.extras.subagentLogs > 0 || p.extras.mediaFiles > 0) {
+        if (p.extras.subagentLogs > 0 || p.extras.mediaFiles > 0 || p.extras.files > 0) {
           summaryRows.push(h('div', { className: 'dsh-session-import-row' },
-            `压缩包内另有 ${p.extras.subagentLogs} 个子代理日志与 ${p.extras.mediaFiles} 个媒体附件(本次不导入)`));
+            `同时恢复 ${p.extras.subagentLogs} 个子会话、${p.extras.mediaFiles} 张图片和 ${p.extras.files} 个文件附件`));
         }
         const summarySection = h('div', { className: 'dsh-session-import-section' },
           h('div', { className: 'dsh-session-import-section-title' }, '日志概要'),
@@ -433,35 +432,20 @@ window.__ModuleLoader__.load({
         }
 
         const verifySection = h('div', { className: 'dsh-session-import-section' },
-          h('div', { className: 'dsh-session-import-section-title' }, '真实性验证'),
+          h('div', { className: 'dsh-session-import-section-title' }, '文件校验'),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
             verdictBadge,
-            h('span', { className: 'dsh-session-import-row', style: { fontSize: 11.5 } }, '注意:结构检查与指纹能发现多数篡改,但无法证明作者身份')),
+            h('span', { className: 'dsh-session-import-row', style: { fontSize: 11.5 } }, '结构校验检查日志能否恢复；与独立提供的指纹比对可检查文件是否一致，无法证明作者身份')),
           anomalyList,
           hashRow,
           h('div', { className: 'dsh-session-import-field' }, hashFieldChildren));
 
-        const syncRows = syncGroups.map((group) => {
-          const value = syncValueOf(p.sync, group.key);
-          return h('label', {
-            key: group.key,
-            className: `dsh-session-import-check${options.sync[group.key] ? '' : ' disabled'}`,
-          },
-            h('input', {
-              type: 'checkbox',
-              checked: options.sync[group.key],
-              onChange: (event) => setOptions({
-                ...options,
-                sync: { ...options.sync, [group.key]: event.target.checked },
-              }),
-            }),
-            h('span', null, `${group.label}: `, h('strong', null, value)));
-        });
         const syncSection = syncGroups.length > 0
           ? h('div', { className: 'dsh-session-import-section' },
-            h('div', { className: 'dsh-session-import-section-title' }, '同步到会话'),
-            h('div', { className: 'dsh-session-import-rows' }, syncRows))
-          : h('div', { className: 'dsh-session-import-row', style: { marginTop: 10 } }, '日志中未发现可同步的状态信息');
+            h('div', { className: 'dsh-session-import-section-title' }, '保留的会话状态'),
+            ...syncGroups.map(group => h('div', { key: group.key, className: 'dsh-session-import-row' },
+              `${group.label}: ${syncValueOf(p.sync, group.key)}`)))
+          : null;
 
         const workspaceOptions = [];
         if (typeof p.provenance.cwd === 'string') {
@@ -502,7 +486,8 @@ window.__ModuleLoader__.load({
         h('div', { className: 'ok-icon' }, '✓'),
         h('div', { className: 'msg' }, '导入成功'),
         h('div', { className: 'detail' },
-          result?.sessionId ? `已打开新会话 ${result.sessionId}` : '会话已导入,可在会话列表中打开'));
+          result?.opened ? '已打开导入的会话' : '会话已导入，可从侧栏打开'),
+        ...(result?.warnings ?? []).map((message, index) => h('div', { key: index, className: 'dsh-session-import-anomaly warn' }, message)));
 
       const resetSelection = () => {
         setPhase('idle');
@@ -527,12 +512,12 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'dsh-session-import-btn',
             onClick: () => { if (phase !== 'importing') onClose(); },
-          }, '取消'));
+          }, phase === 'done' ? '完成' : '取消'));
 
       const panelChildren = [
         h('h2', { className: 'dsh-session-import-title' }, '导入会话日志'),
         h('p', { className: 'dsh-session-import-subtitle' },
-          '把其他人导出的 DSH 会话(或其子代理日志)导入为新的会话,并按需同步模型、思考深度、Agent 模式与状态栏设置。'),
+          '导入 DSH 导出的 ZIP 或 JSONL，恢复会话历史、子会话与附件。'),
       ];
       if (phase === 'idle') panelChildren.push(dropzone);
       else if (phase === 'analyzing') panelChildren.push(statusRow('正在解析并验证文件…'));
