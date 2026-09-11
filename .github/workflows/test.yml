@@ -1,0 +1,36 @@
+name: Import compatibility
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+        dsh: ['0.1.5-rc.1', '0.1.5-rc.2']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install one released DSH cohort
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}
+        run: node test/install-cohort.js
+      - run: npm run check && npm test
+      - uses: pnpm/action-setup@v4
+        if: matrix.node == 24
+        with:
+          version: '11.21.0'
+      - name: Browser dependencies
+        if: matrix.node == 24
+        run: npx playwright install --with-deps chromium
+      - name: Package install, authenticated import, export round-trip and uninstall
+        if: matrix.node == 24
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          DSH_PLUGIN_PACKAGE="$RUNNER_TEMP/dsh-session-import-2.0.0.tgz" npm run test:web
+      - run: npm pack --dry-run

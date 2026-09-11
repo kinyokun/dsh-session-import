@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-import",
-  "version": "1.0.2",
-  "description": "DSH 会话日志导入插件：解析 /export 导出的 .zip 或裸 .jsonl，做结构真实性验证与 SHA-256 指纹校验，按需同步模型/思考深度/Agent 预设/权限/沙箱/审批等状态，并在新对话界面提供「导入对话」按钮；导入/删除实时推送到页面，无需刷新。",
+  "version": "2.0.0",
+  "description": "导入 DSH 官方导出的 ZIP/JSONL，通过官方格式迁移恢复会话、子会话与附件。",
   "type": "module",
   "main": "host.js",
   "exports": {
@@ -31,6 +31,32 @@
   "license": "MIT",
   "dependencies": {},
   "engines": {
-    "node": ">=20"
-  }
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check host.js && node --check client.js && node --check archive.js && node --check session-format.js && node --check importer.js && node --check storage-adapter.js",
+    "test:web": "node test/web.e2e.js"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-session": "~0.1.5-rc.1",
+    "@deepseek-ai/dsh-session-format-catalog": "~0.1.5-rc.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-attachment-local": "0.1.5-rc.2",
+    "playwright": "^1.55.0",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.2",
+    "@deepseek-ai/dsh": "0.1.5-rc.2"
+  },
+  "files": [
+    "*.js",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "SECURITY.md",
+    "docs"
+  ]
 }

@@ -1,8 +1,7 @@
 # 测试样本
 
-| 文件 | 说明 |
-| --- | --- |
-| `good.jsonl` | 最小合法会话日志:头行 + 权限/沙箱/审批/预设、一个完整轮次(turn/step 闭合)、request/header(模型配置)、user/assistant 消息与标题事件 |
-| `tampered-gap.jsonl` | 由 `good.jsonl` 删除第 8 行(user/message)得到 —— seq 出现空洞,结构验证应判 `error` 并拒绝导入 |
+- `good.jsonl`：合成的合法 v0 日志，包含模型配置、用户消息、助手流、完整轮次及标题；由官方目录迁移为 v3。
+- `tampered-gap.jsonl`：删除一个事件后产生的序号断裂，analyze 应返回 HTTP 400。
+- 其他格式、子会话、种子边界与图片/文件样本由 `test/helpers.js` 和测试动态构造。
 
-样本不含任何真实对话内容,可安全提交与传播。
+样本不含真实用户对话、凭据或项目文件。

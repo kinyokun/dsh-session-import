@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0 — 2026-09-11
+
+- 合并 PR #1 的 GitHub bundle 安装与浏览器模块名称修复，补充旧手动安装迁移、禁用与官方卸载说明。
+- 通过官方 session-format-catalog 迁移 v0/v1/v2 日志并验证 v3，移除自维护的旧事件白名单与状态过滤逻辑。
+- 使用 SessionHandle 完成写入、flush、重新读取与关闭，适配当前会话与工作区接口。
+- 恢复子会话树、图片和文件附件；为所有会话分配新 ID，完整保留历史事件。
+- 导入 API 迁至 `/api/session-import/*`，通过官方 connection.fetch 接入登录认证与 Host / Origin 访问控制，关闭旧的未认证路由。
+- 限定 ZIP 路径、数量和解压大小，检查 CRC、附件指纹、重复 ID 和父子关系。
+- 持久记录本插件的导入；撤销与正常失败路径保留隔离副本，拒绝清理无记录或发生变化的会话。
+- 修复不存在的 workspaces.refresh 调用，明确区分已导入、已恢复和已打开，保留打开失败提示。
+
+
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式,版本号遵循语义化版本。
 
 ## [1.0.2] - 2026-08-14
