@@ -66,11 +66,27 @@ DSH mainline 变化很快:升级前建议先跑 `test/smoke.sh` 验证。
 
 覆盖 `host.js` / `client.js` / `package.json` 后重启 `dsh web` 并刷新页面。已导入的会话不受影响。
 
+### 从手动安装切换到 GitHub 安装
+
+先备份 profile 的 `cordis.patch.yml`，移除之前手动添加的 `session-import` 插件 `insert` 条目，再执行 GitHub 安装命令。安装包会自动提供该条目；同时保留两份会造成重复挂载。其他插件条目和已导入会话保持不变。
+
+如果曾将插件目录命名为 `session-import`，同时将该旧目录移出 profile 的 `node_modules` 留作备份。切换完成后重启 `dsh web` 并刷新浏览器。
+
 ### 禁用
 
 在 patch 中追加 `- id: session-import` + `disabled: true`(保留文件,随时可重新启用)。
 
 ### 彻底移除
+
+通过 `dsh plugin` 安装时，使用官方包管理命令同步移除依赖和 profile bundle 登记：
+
+```bash
+dsh plugin --profile web remove dsh-session-import
+```
+
+然后重启 `dsh web` 并刷新浏览器。不要只删除 `node_modules` 中的目录，否则 profile 仍可能引用已不存在的 bundle。
+
+以下步骤仅适用于原来的手动安装：
 
 删除 patch 中的 insert 条目与 `node_modules/dsh-session-import/` 目录,重启 `dsh web`。已导入的会话日志保留在 DSH 的 sessions 目录中(它们是普通会话,可用 `POST /session-import/delete` 删除或留用)。
 
