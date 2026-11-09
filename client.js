@@ -246,7 +246,7 @@ window.__ModuleLoader__.load({
       return { response, data };
     }
 
-    function ImportDialog({ sessions, workspaces, onClose }) {
+    function ImportDialog({ sessions, workspaces, uiWorkspace, onClose }) {
       const workspaceState = useStore(workspaces.list);
       const [phase, setPhase] = React.useState('idle'); // idle | analyzing | preview | importing | done
       const [error, setError] = React.useState(null);
@@ -319,7 +319,7 @@ window.__ModuleLoader__.load({
           if (typeof data.sessionId === 'string' && data.sessionId !== '') {
             try {
               await sessions.refresh();
-              sessions.open(data.sessionId);
+              uiWorkspace.openSession(data.sessionId);
               data.opened = true;
             } catch (openError) {
               data.opened = false;
@@ -332,7 +332,7 @@ window.__ModuleLoader__.load({
           setError(String(err && err.message ? err.message : err));
           setPhase('preview');
         }
-      }, [options, fileBytes, file, verification, sessions, workspaces, onClose]);
+      }, [options, fileBytes, file, verification, sessions, workspaces, uiWorkspace, onClose]);
 
       const expected = typeof options?.expectedHash === 'string' ? options.expectedHash.trim().toLowerCase() : '';
       const hashMatches = expected !== '' && verification !== null && expected === verification.sha256;
@@ -535,10 +535,10 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsh-session-import-panel', role: 'dialog', 'aria-modal': 'true' }, panelChildren));
     }
 
-    function SessionImportOverlay({ sessions, workspaces }) {
+    function SessionImportOverlay({ sessions, workspaces, uiWorkspace }) {
       const open = useDialogOpen();
       return open
-        ? h(ImportDialog, { sessions, workspaces, onClose: () => setDialogOpen(false) })
+        ? h(ImportDialog, { sessions, workspaces, uiWorkspace, onClose: () => setDialogOpen(false) })
         : null;
     }
 
@@ -555,11 +555,12 @@ window.__ModuleLoader__.load({
         return () => tag.remove();
       }, 'session-import: styles');
 
-      ctx.inject(['sessions', 'workspaces'], (scope) => {
+      ctx.inject(['sessions', 'workspaces', 'uiWorkspace'], (scope) => {
         scope.slots.inject('shell.overlay', () => scope.slots.register(
           { name: 'shell.overlay', id: 'session-import' },
           () => h(SessionImportOverlay, {
             sessions: scope.sessions,
+            uiWorkspace: scope.uiWorkspace,
             workspaces: scope.workspaces,
           }),
         ));
