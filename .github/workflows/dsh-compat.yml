@@ -1,0 +1,51 @@
+name: DSH compat watch
+
+on:
+  schedule:
+    - cron: "40 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  latest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Resolve latest @deepseek-ai/dsh
+        id: v
+        run: echo "latest=$(npm view @deepseek-ai/dsh dist-tags.latest)" >> "$GITHUB_OUTPUT"
+      - name: Install the latest official cohort
+        env:
+          DSH_VERSION: ${{ steps.v.outputs.latest }}
+        run: node test/install-cohort.js
+      - name: Check and test against latest
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run check && npm test 2>&1 | tee /tmp/test.log
+      - name: Report failure as an issue
+        if: failure()
+        run: |
+          title="DSH ${{ steps.v.outputs.latest }} 兼容性检查失败"
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq ".[0].number // empty")
+          {
+            echo "自动化兼容检查在 **@deepseek-ai/dsh ${{ steps.v.outputs.latest }}** 上失败。"
+            echo
+            echo "- 工作流运行：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo "~~~"
+            tail -n 60 /tmp/test.log 2>/dev/null || echo "(no test log)"
+            echo "~~~"
+          } > /tmp/body.md
+          if [ -n "$existing" ]; then gh issue comment "$existing" --body-file /tmp/body.md
+          else gh issue create --title "$title" --label dsh-upgrade --body-file /tmp/body.md
+          fi
