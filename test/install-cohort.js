@@ -1,7 +1,7 @@
 // Pin the complete official SDK peer graph to one release; caret peers otherwise mix RCs.
 import { spawnSync } from 'node:child_process';
 const version = process.env.DSH_VERSION;
-if (!/^0\.1\.5-rc\.[12]$/u.test(version ?? '')) throw new Error('Set DSH_VERSION to 0.1.5-rc.1 or 0.1.5-rc.2');
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version ?? '')) throw new Error('Set DSH_VERSION to a released @deepseek-ai/dsh version');
 const packages = new Set(['@deepseek-ai/dsh']);
 const pending = [...packages];
 while (pending.length) {
