@@ -4,11 +4,18 @@ import { mkdtemp, mkdir, readFile, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
-import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl';
+import * as JsonlPersistenceModule from '@deepseek-ai/dsh-session-persistence-jsonl';
 import AttachmentStore from '@deepseek-ai/dsh-attachment-local';
+
+/** 0.2.x 把持久化从类改成了 cordis 插件模块，这里把它包成一个插件对象。 */
+const JsonlPersistence = {
+  name: JsonlPersistenceModule.name,
+  apply: JsonlPersistenceModule.apply,
+  Config: JsonlPersistenceModule.Config,
+};
 import { Session } from '@deepseek-ai/dsh-session';
 import { SessionImporter } from '../importer.js';
-import { parseUpload, prepareSessions, sha256 } from '../session-format.js';
+import { parseUpload, prepareSessions, sha256, SESSION_FORMAT_VERSION } from '../session-format.js';
 import { RecoveryStore } from '../storage-adapter.js';
 import { fixture, zip, pngFixture } from './helpers.js';
 
@@ -29,7 +36,7 @@ async function harness(t, compression = 'none') {
 
 for (const version of [0, 1, 2, 3]) test(`official migration accepts v${version} and preserves conversation text`, () => {
   const parsed = parseUpload(fixture(version));
-  assert.equal(parsed.logs[0].header.version, 3);
+  assert.equal(parsed.logs[0].header.version, SESSION_FORMAT_VERSION);
   const log = prepareSessions(parsed, '/private/tmp', { restamp: false })[0];
   const restored = Session.fromRestore(log.header.id, log.events, log.header, log.inheritedEventCount, 'detached');
   assert.deepEqual(restored.deriveMessages().map(message => message.role), ['system', 'user', 'assistant']);
@@ -37,7 +44,7 @@ for (const version of [0, 1, 2, 3]) test(`official migration accepts v${version}
 });
 
 test('refuses future formats, damaged sequences and unknown required events', () => {
-  assert.throws(() => parseUpload(fixture(4)), /v4|version 4|format 4/i);
+  assert.throws(() => parseUpload(fixture(5)), /v5|version 5|format 5|unsupported/i);
   const lines = fixture(3).toString().trim().split('\n');
   assert.throws(() => parseUpload(Buffer.from(lines.filter((_, i) => i !== 4).join('\n'))), /seq|contiguous|sequence/i);
   const event = JSON.parse(lines[1]); event.type = 'future/unknown'; lines[1] = JSON.stringify(event);
@@ -111,7 +118,11 @@ test('undo survives plugin restart, refuses non-owned sessions and quarantines a
   assert.equal(h.attached.size, 0);
   const journal = JSON.parse(await readFile(undone.recoveryRecord));
   assert.equal(journal.status, 'undone');
-  assert.match(await readFile(join(journal.quarantined[0].destination, 'session.v3.jsonl'), 'utf8'), /hello from the source/);
+  // 隔离目录里的日志文件名随运行时格式版本变化（0.2.x 是 session.jsonl），按实际条目读取。
+  const quarantinedDir = journal.quarantined[0].destination;
+  const logName = (await readdir(quarantinedDir)).find(name => /^session(?:\.[0-9a-z]+)?\.jsonl(?:\.zstd)?$/u.test(name));
+  assert.ok(logName, `隔离目录缺少会话日志: ${(await readdir(quarantinedDir)).join(', ')}`);
+  assert.match(await readFile(join(quarantinedDir, logName), 'utf8'), /hello from the source/);
 });
 
 test('failed workspace attachment rolls back the entire tree and releases writer locks', async t => {

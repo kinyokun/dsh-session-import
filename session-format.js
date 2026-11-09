@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog';
+import { createSessionFormatCatalogWithChildren, sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog';
 import { SESSION_FORMAT_VERSION, Session } from '@deepseek-ai/dsh-session';
 import { MAX_UPLOAD_BYTES, readZipArchive } from './archive.js';
 
@@ -10,12 +10,44 @@ const IMAGE_EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp'
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export const errorOf = (statusCode, message, code = 'bad-file') => Object.assign(new Error(message), { statusCode, code });
 
-/** Delegate historical decoding, migration and semantic validation to the installed DSH catalog. */
-export function parseSession(bytes, filename) {
+/** 按 UTF-8 解码成行（去掉 BOM）。 */
+function linesOf(bytes) {
+  return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/u, '').split('\n');
+}
+
+/** 读取物理头（第一行 JSON），用于建立父子关系与子会话事实。 */
+function physicalHeader(bytes) {
+  return JSON.parse(linesOf(bytes)[0]);
+}
+
+/**
+ * 子会话描述符：优先取子日志里第一个 subagent/descriptor 事件（运行时认的就是它）。
+ * 老格式没有该事件时退化为一个中立的 one-shot 描述，让 V3→V4 迁移能补上 catalog 事实。
+ */
+function subagentDescriptor(bytes) {
+  for (const line of linesOf(bytes)) {
+    if (!line.includes('subagent/descriptor')) continue;
+    try {
+      const row = JSON.parse(line);
+      if (row?.type === 'subagent/descriptor' && row.data && typeof row.data === 'object') return row.data;
+    } catch { /* 交给后续完整解析报错 */ }
+  }
+  return { version: 3, mode: 'one-shot', provider: 'dsh-session-import' };
+}
+
+/**
+ * Delegate historical decoding, migration and semantic validation to the installed DSH catalog.
+ * @param bytes - 单条会话 JSONL
+ * @param filename - 归档内路径
+ * @param childFacts - 该会话历史子会话事实；0.2.x 的 V3→V4 迁移要求显式提供（叶子传 []）
+ */
+export function parseSession(bytes, filename, childFacts = []) {
   try {
     const lines = new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/u, '').split('\n');
     const physical = JSON.parse(lines[0]);
-    const restore = sessionFormatCatalog.createRestore(physical, { recovery: 'strict', validation: 'current' });
+    // 即使没有子会话也必须用空数组构造：0.2.x 要求显式声明“无子会话”。
+    const catalog = createSessionFormatCatalogWithChildren(childFacts);
+    const restore = catalog.createRestore(physical, { recovery: 'strict', validation: 'current' });
     let count = 0;
     for (const line of lines.slice(1)) {
       if (!line.trim()) continue;
@@ -93,7 +125,24 @@ export function parseUpload(bytes, filename = 'session.jsonl') {
   if (rootNames.length !== 1) throw errorOf(400, '压缩包必须包含唯一的根会话 JSONL');
   const childNames = zipped ? [...files.keys()].filter(name => /^subagents\/.+\.jsonl$/iu.test(name)) : [];
   if (childNames.length >= MAX_SESSIONS) throw errorOf(400, '子会话数量超过 255');
-  const logs = [rootNames[0], ...childNames].map(name => parseSession(files.get(name), name));
+  const entries = [rootNames[0], ...childNames].map(name => ({ name, bytes: files.get(name) }));
+  const headers = entries.map((entry) => {
+    try { return physicalHeader(entry.bytes); } catch (error) { throw errorOf(400, `${entry.name}: ${error.message}`); }
+  });
+  // 0.2.x 的 V3→V4 迁移要求父会话显式携带子会话事实：用归档里子会话的物理头当 descriptor。
+  const factsByParent = new Map();
+  for (const [index, header] of headers.entries()) {
+    if (typeof header.parentSession !== 'string') continue;
+    const facts = factsByParent.get(header.parentSession) ?? [];
+    facts.push({
+      childId: header.id,
+      descriptor: subagentDescriptor(entries[index].bytes),
+      descriptorCount: 1,
+      childCreatedAt: header.createdAt,
+    });
+    factsByParent.set(header.parentSession, facts);
+  }
+  const logs = entries.map((entry, index) => parseSession(entry.bytes, entry.name, factsByParent.get(headers[index].id) ?? []));
   const byId = new Map(logs.map(log => [log.header.id, log]));
   if (byId.size !== logs.length) throw errorOf(400, '压缩包包含重复会话 ID 或多个日志代际');
   if (logs.reduce((n, log) => n + log.events.length, 0) > MAX_EVENTS) throw errorOf(400, '事件总量超过上限');

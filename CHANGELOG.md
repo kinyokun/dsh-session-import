@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.0 — 2026-11-09
+
+- 适配 DSH 0.2.2-rc.1（会话格式 v4）：
+  - 持久化包从默认导出类改为 cordis 插件（`{ name, apply, Config }`），测试按插件装载；
+  - 解析时为每个会话用 `createSessionFormatCatalogWithChildren` 提供子会话事实（叶子显式传 `[]`）；
+  - 子会话描述符取自子日志里的 `subagent/descriptor` 事件，老格式缺省时退化为中立的 one-shot 描述；
+  - 存储适配器不再依赖插件名与 `session.v3.jsonl` 文件名，改为按能力探测并接受当前格式文件名。
+- 依赖与 CI cohort 升到 `0.2.2-rc.1`；`install-cohort` 接受任意已发布版本号。
+
 ## 2.0.0 — 2026-09-11
 
 - 合并 PR #1 的 GitHub bundle 安装与浏览器模块名称修复，补充旧手动安装迁移、禁用与官方卸载说明。

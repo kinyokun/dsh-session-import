@@ -12,7 +12,8 @@ const inside = (root, child) => { const rel = relative(root, child); return rel 
  */
 export class RecoveryStore {
   constructor(persistence) {
-    if (SESSION_FORMAT_VERSION !== 3 || persistence?.name !== 'session-persistence-jsonl' || typeof persistence.config?.root !== 'string'
+    // 0.2.x：持久化服务不再暴露插件名，改为按能力探测；格式版本随运行时走（当前 v4）。
+    if (!persistence || typeof persistence.config?.root !== 'string'
       || typeof persistence.locate !== 'function' || ['create', 'open', 'stat', 'list', 'flush'].some(method => typeof persistence[method] !== 'function')) {
       throw errorOf(503, '当前导入需要 DSH 0.1.5 的 JSONL 存储后端；未写入任何会话。', 'compatibility');
     }
@@ -24,8 +25,10 @@ export class RecoveryStore {
   pathFor(header) {
     if (!OWN_ID.test(header.id)) throw errorOf(409, '拒绝处理非本插件创建的会话', 'ownership');
     const location = this.persistence.locate(header);
-    if (location?.kind !== 'jsonl' || typeof location.path !== 'string'
-      || !/^session\.v3\.jsonl(?:\.zstd)?$/u.test(basename(location.path))
+    const filename = typeof location?.path === 'string' ? basename(location.path) : '';
+    const currentName = /^session\.jsonl(?:\.zstd)?$/u.test(filename)
+      || new RegExp(`^session\\.v${SESSION_FORMAT_VERSION}\\.jsonl(?:\\.zstd)?$`, 'u').test(filename);
+    if (location?.kind !== 'jsonl' || !currentName
       || !inside(this.root, location.path)) throw errorOf(503, '存储布局已改变，需要更新导入插件', 'compatibility');
     return dirname(location.path);
   }
