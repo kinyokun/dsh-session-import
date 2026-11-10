@@ -12,6 +12,8 @@
 
 成功返回 `ok: true`、`preview`（标题、状态、根会话事件数、总事件数、来源版本、子会话和附件数量）以及 `verification`（`sha256`、`errors`、`warnings`、`verdict`）。无法恢复的文件直接返回 HTTP 400。
 
+`preview.provenance` 给出根会话的原始 `id`、`createdAt`、`cwd` 与 `delegationDepth`。`cwdOnHost: false` 表示日志记录的 cwd 在本机不是合法绝对路径（例如 Windows 导出的 `C:\\…`），此时 `cwd` 仍是原始字符串，仅用于展示；导入必须显式指定 `workspace`。
+
 ## POST /api/session-import/import
 
 请求体同 analyze。查询参数：
@@ -19,7 +21,7 @@
 | 参数 | 含义 |
 | --- | --- |
 | `name` | 文件显示名，默认 `session.jsonl` |
-| `workspace` | 目标目录绝对路径；`original` 或省略时使用根日志 cwd，必须是本机现有目录 |
+| `workspace` | 目标目录绝对路径；`original` 或省略时使用根日志 cwd，必须是本机现有目录。日志来自其他系统、原 cwd 在本机不合法时，`original` 与省略都返回 400 `workspace`，必须显式指定 |
 | `restamp` | 默认 `1`；`0` 保留原始时间 |
 | `title` | 可选根会话标题，最多 100 UTF-8 字节 |
 | `expectedHash` | 可选 64 位 SHA-256，不匹配返回 HTTP 409 |

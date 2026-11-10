@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0 — 2026-11-10
+
+- 支持跨系统导入（Windows ↔ macOS/Linux）：官方格式迁移只接受本机绝对路径，过去 Windows 日志在 Linux 上会整体报错 `format v2 header cwd must be absolute`。现在解析时把无法在本机解析的 header cwd 换成宿主根占位再迁移，原始路径通过 `sourceCwd` / `preview.provenance.cwd`（`cwdOnHost: false`）保留展示。
+- 导入接口在日志来自其他系统时拒绝 `original`（省略 `workspace` 同样拒绝），返回 400 `workspace` 提示选择本机目标工作区，避免落到占位根目录；导入面板不再提供「保持日志原始目录」，改为提示并强制选择本机工作区。
+- 新增 5 项测试（v0–v3 的跨系统 cwd 修复、选工作区后可导入、拒绝 `original`）。
+
 ## 2.1.0 — 2026-11-09
 
 - 适配 DSH 0.2.2-rc.1（会话格式 v4）：

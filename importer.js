@@ -30,7 +30,12 @@ export class SessionImporter {
   }
 
   async target(query, parsed) {
-    const path = !query.workspace || query.workspace === 'original' ? parsed.logs[0].header.cwd : query.workspace;
+    const useOriginal = !query.workspace || query.workspace === 'original';
+    if (useOriginal && parsed.sourceCwd !== undefined) {
+      // 其他系统的路径不能直接当真：让用户显式选一个本机工作区，而不是落到占位根目录。
+      throw errorOf(400, `日志来自其他操作系统的工作区(${parsed.sourceCwd}),请选择本机目标工作区`, 'workspace');
+    }
+    const path = useOriginal ? parsed.logs[0].header.cwd : query.workspace;
     if (!path) throw errorOf(400, '请选择目标工作区', 'workspace');
     try {
       const cwd = await realpath(path);

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isAbsolute, parse as parsePath } from 'node:path';
 import { createSessionFormatCatalogWithChildren, sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog';
 import { SESSION_FORMAT_VERSION, Session } from '@deepseek-ai/dsh-session';
 import { MAX_UPLOAD_BYTES, readZipArchive } from './archive.js';
@@ -18,6 +19,18 @@ function linesOf(bytes) {
 /** 读取物理头（第一行 JSON），用于建立父子关系与子会话事实。 */
 function physicalHeader(bytes) {
   return JSON.parse(linesOf(bytes)[0]);
+}
+
+/** 宿主根目录：其他系统的工作区路径在本机不合法时用它占位，避免整个归档解析失败。 */
+const HOST_ROOT = parsePath(process.cwd()).root;
+
+/**
+ * 物理头里的工作区路径在本机不是绝对路径时（Windows 导出、Linux 导入等），返回原始字符串；
+ * 否则返回 null。官方格式迁移只接受本机绝对路径，跨系统日志会在 migrate 阶段被拒绝。
+ */
+function foreignCwdOf(header) {
+  const cwd = header?.cwd;
+  return typeof cwd === 'string' && cwd !== '' && !isAbsolute(cwd) ? cwd : null;
 }
 
 /**
@@ -45,9 +58,12 @@ export function parseSession(bytes, filename, childFacts = []) {
   try {
     const lines = new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/u, '').split('\n');
     const physical = JSON.parse(lines[0]);
+    // 跨系统的 cwd 先换成宿主根再迁移，真实路径通过 sourceCwd 返回给调用方选择工作区。
+    const sourceCwd = foreignCwdOf(physical);
+    const restorable = sourceCwd === null ? physical : { ...physical, cwd: HOST_ROOT };
     // 即使没有子会话也必须用空数组构造：0.2.x 要求显式声明“无子会话”。
     const catalog = createSessionFormatCatalogWithChildren(childFacts);
-    const restore = catalog.createRestore(physical, { recovery: 'strict', validation: 'current' });
+    const restore = catalog.createRestore(restorable, { recovery: 'strict', validation: 'current' });
     let count = 0;
     for (const line of lines.slice(1)) {
       if (!line.trim()) continue;
@@ -56,7 +72,7 @@ export function parseSession(bytes, filename, childFacts = []) {
     }
     const artifact = restore.finish();
     if (artifact.events.length > MAX_EVENTS) throw new Error('会话事件超过上限');
-    return { ...artifact, sourceVersion: physical.version, filename };
+    return { ...artifact, sourceVersion: physical.version, filename, ...(sourceCwd === null ? {} : { sourceCwd }) };
   } catch (error) {
     throw errorOf(400, `${filename}: ${error.message}`);
   }
@@ -161,7 +177,7 @@ export function parseUpload(bytes, filename = 'session.jsonl') {
   const warnings = [];
   if (attachments.some(item => !item.data)) warnings.push('裸 JSONL 不包含附件；导入前会检查目标 DSH 是否已有这些附件。');
   if (root.header.parentSession) warnings.push('根会话会作为独立会话导入，不连接目标机器上同名的旧父会话。');
-  return { logs, attachments, sha256: sha256(bytes), byteLength: bytes.length, warnings };
+  return { logs, attachments, sha256: sha256(bytes), byteLength: bytes.length, warnings, ...(root.sourceCwd === undefined ? {} : { sourceCwd: root.sourceCwd }) };
 }
 
 /** Keep the established preview API while reporting the complete archive and migrated format. */
@@ -186,7 +202,7 @@ export function previewOf(parsed) {
     title, sync, counts, eventCount: events.length, totalEventCount: parsed.logs.reduce((n, log) => n + log.events.length, 0),
     byteLength: parsed.byteLength, lastTime: events.at(-1)?.time ?? header.createdAt,
     formatVersion: SESSION_FORMAT_VERSION, sourceVersions: [...new Set(parsed.logs.map(log => log.sourceVersion))],
-    provenance: { originalId: header.id, createdAt: header.createdAt, cwd: header.cwd ?? null, delegationDepth: header.delegationDepth ?? 0 },
+    provenance: { originalId: header.id, createdAt: header.createdAt, cwd: parsed.sourceCwd ?? header.cwd ?? null, cwdOnHost: parsed.sourceCwd === undefined, delegationDepth: header.delegationDepth ?? 0 },
     extras: { subagentLogs: parsed.logs.length - 1, mediaFiles: parsed.attachments.filter(item => item.type === 'image').length, files: parsed.attachments.filter(item => item.type === 'file').length },
   };
 }
