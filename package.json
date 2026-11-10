@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-import",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "导入 DSH 官方导出的 ZIP/JSONL，通过官方格式迁移恢复会话、子会话与附件。",
   "type": "module",
   "main": "host.js",

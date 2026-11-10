@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
@@ -15,7 +15,7 @@ const JsonlPersistence = {
 };
 import { Session } from '@deepseek-ai/dsh-session';
 import { SessionImporter } from '../importer.js';
-import { parseUpload, prepareSessions, sha256, SESSION_FORMAT_VERSION } from '../session-format.js';
+import { parseUpload, prepareSessions, previewOf, sha256, SESSION_FORMAT_VERSION } from '../session-format.js';
 import { RecoveryStore } from '../storage-adapter.js';
 import { fixture, zip, pngFixture } from './helpers.js';
 
@@ -41,6 +41,30 @@ for (const version of [0, 1, 2, 3]) test(`official migration accepts v${version}
   const restored = Session.fromRestore(log.header.id, log.events, log.header, log.inheritedEventCount, 'detached');
   assert.deepEqual(restored.deriveMessages().map(message => message.role), ['system', 'user', 'assistant']);
   assert.match(JSON.stringify(restored.deriveMessages()), /hello from the assistant/);
+});
+
+for (const version of [0, 1, 2, 3]) test(`v${version} cross-OS workspace path is repaired before migration`, () => {
+  const parsed = parseUpload(fixture(version, { cwd: 'C:\\Users\\example\\project' }), `session.v${version}.jsonl`);
+  assert.equal(parsed.sourceCwd, 'C:\\Users\\example\\project');
+  const preview = previewOf(parsed);
+  assert.equal(preview.provenance.cwd, 'C:\\Users\\example\\project');
+  assert.equal(preview.provenance.cwdOnHost, false);
+});
+
+test('cross-OS workspace paths import only after choosing a local workspace', async t => {
+  const windows = fixture(2, { cwd: 'C:\\Users\\example\\project' });
+  const preview = previewOf(parseUpload(windows, 'session.v2.jsonl'));
+  assert.equal(preview.provenance.cwdOnHost, false);
+  const h = await harness(t);
+  await assert.rejects(h.importer.import(windows, 'session.v2.jsonl', {}), /其他操作系统/);
+  await assert.rejects(h.importer.import(windows, 'session.v2.jsonl', { workspace: 'original' }), /其他操作系统/);
+  assert.equal((await h.persistence.list()).length, 0);
+  const result = await h.importer.import(windows, 'session.v2.jsonl', { workspace: h.cwd, restamp: '0' });
+  assert.equal((await h.persistence.stat(result.sessionId)).header.cwd, await realpath(h.cwd));
+  const reader = await h.persistence.open(result.sessionId, 'read');
+  try {
+    assert.match(JSON.stringify((await reader.read()).events), /hello from the source/);
+  } finally { await reader.close(); }
 });
 
 test('refuses future formats, damaged sequences and unknown required events', () => {

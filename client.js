@@ -270,9 +270,10 @@ window.__ModuleLoader__.load({
           if (!response.ok || data === null || data.ok !== true) {
             throw new Error(data?.error?.message ?? `解析失败(HTTP ${response.status})`);
           }
+          const provenance = data.preview.provenance ?? {};
           const defaultWorkspace = items.find((item) => item.workspaceId === recentId)?.path
             ?? items[0]?.path
-            ?? (typeof data.preview.provenance.cwd === 'string' ? 'original' : '');
+            ?? (typeof provenance.cwd === 'string' && provenance.cwdOnHost !== false ? 'original' : '');
           setPreview(data.preview);
           setVerification(data.verification);
           setOptions({
@@ -447,16 +448,23 @@ window.__ModuleLoader__.load({
               `${group.label}: ${syncValueOf(p.sync, group.key)}`)))
           : null;
 
+        // 其他系统导出的 cwd 在本机不合法：不提供“保持原始目录”，强制选择本机工作区。
+        const foreignCwd = p.provenance.cwdOnHost === false && typeof p.provenance.cwd === 'string' ? p.provenance.cwd : null;
         const workspaceOptions = [];
-        if (typeof p.provenance.cwd === 'string') {
+        if (typeof p.provenance.cwd === 'string' && foreignCwd === null) {
           workspaceOptions.push(h('option', { value: 'original' }, `保持日志原始目录(${p.provenance.cwd})`));
         }
         for (const item of items) {
           workspaceOptions.push(h('option', { key: item.workspaceId, value: item.path }, `${item.title}(${item.path})`));
         }
+        if (workspaceOptions.length === 0) {
+          workspaceOptions.push(h('option', { value: '' }, '（请先在本机打开任意工作区）'));
+        }
 
         const optionsSection = h('div', { className: 'dsh-session-import-section' },
           h('div', { className: 'dsh-session-import-section-title' }, '导入选项'),
+          foreignCwd === null ? null : h('div', { className: 'dsh-session-import-row' },
+            `日志来自其他操作系统,原工作区路径(${foreignCwd})在本机无效,请选择目标工作区。`),
           h('div', { className: 'dsh-session-import-field' },
             h('label', null, '目标工作区'),
             h('select', {
