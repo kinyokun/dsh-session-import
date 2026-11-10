@@ -32,5 +32,7 @@ jobs:
         if: matrix.node == 24
         run: |
           npm pack --pack-destination "$RUNNER_TEMP"
-          DSH_PLUGIN_PACKAGE="$RUNNER_TEMP/dsh-session-import-2.1.0.tgz" npm run test:web
+          # 打包文件名随 package.json 版本走，避免升版本后这里仍指向旧 tarball。
+          TARBALL="$RUNNER_TEMP/$(node -p "require('./package.json').name + '-' + require('./package.json').version + '.tgz'")"
+          DSH_PLUGIN_PACKAGE="$TARBALL" npm run test:web
       - run: npm pack --dry-run
