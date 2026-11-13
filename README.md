@@ -16,6 +16,8 @@ DSH 的接口仍在快速变化。升级后访问 `/api/session-import/status` �
 
 ## 安装
 
+> **不要安装 npm 上的同名包 `dsh-session-import@0.1.1`。** npm 上这个包只有 0.1.1（0.1.x 时代的旧实现，作者与仓库都不是本项目），它依赖 `@deepseek-ai/dsh-*@0.1.0-rc.8`。在 DSH 0.2.x 上安装会把旧版核心包写进 profile 顶层 `node_modules`，覆盖官方的 `sessions` / `llm` / `tools` / `commands` / `sessionTitle`，启动时这些插件被判为不兼容并禁用，DSH 因此无法启动（`startup failed: 2 required plugins did not activate`）。本仓库的 2.x 只通过 GitHub 安装。
+
 ```bash
 dsh plugin --profile web add github:kinyokun/dsh-session-import
 ```
@@ -38,6 +40,16 @@ dsh plugin --profile web add "$PWD"
 4. 重启 DSH 并刷新页面。已导入会话不需要重新导入。
 
 2.x 的宿主代码由多个模块组成，并依赖官方格式库；不要再只复制 `host.js`、`client.js` 和 `package.json`。
+
+### 误装 npm 0.1.1 导致 DSH 无法启动
+
+若启动报 `startup failed: 2 required plugins did not activate`，且日志里出现 `@deepseek-ai/dsh-session@0.1.0-rc.8` 等旧核心包（见 issue #7）：
+
+1. 完全退出 DSH。
+2. 编辑 profile 的 `package.json`：从 `dependencies` **和** `dsh.profile.bundles` 中删除 `dsh-session-import`。
+3. 删除 profile 下的 `node_modules` 与 `pnpm-lock.yaml`；官方插件由 DSH 运行时提供，不需要重装。其他第三方插件在重启后按需重装。
+4. 若 `cordis.patch.yml` 里有 `id: session-import` 的手动 insert 条目，一并删除。
+5. 重启 DSH。确认能正常启动后，再按上面的 GitHub 命令安装 2.x；**不要**用 `dsh plugin allow-version` 放行 0.1.0-rc.8 旧包。
 
 ### 升级、禁用与卸载
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 未发布
+
+- 安装文档补充 npm 同名旧包 `dsh-session-import@0.1.1` 的启动故障根因与 profile 恢复步骤（issue #7）。
+
 ## 2.2.0 — 2026-11-10
 
 - 支持跨系统导入（Windows ↔ macOS/Linux）：官方格式迁移只接受本机绝对路径，过去 Windows 日志在 Linux 上会整体报错 `format v2 header cwd must be absolute`。现在解析时把无法在本机解析的 header cwd 换成宿主根占位再迁移，原始路径通过 `sourceCwd` / `preview.provenance.cwd`（`cwdOnHost: false`）保留展示。
