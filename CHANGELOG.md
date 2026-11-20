@@ -4,7 +4,7 @@
 
 - 适配并验证 DSH `0.2.2-rc.5`：本机安装该版本后 `npm run check` 与 `npm test` 31/31 通过，插件代码无需改动。
 - 修复 CI cohort 在 Linux 上的安装失败：官方包 `@deepseek-ai/dsh-experimental-cua-macos` 自 0.2.2-rc.5 起只发布 darwin（它只是 `dsh-cua-bundle` 的 optionalDependency），cohort 为钉住 peer 图而显式安装每个官方包时被 npm 以 `EBADPLATFORM` 拒绝。现在按 manifest 的 `os`/`cpu` 过滤，并新增 4 项选择逻辑单测。
-- CI cohort 升到 `0.2.2-rc.5`、Node 24（该版本 engines 要求 Node >= 24.9）；dependencies/peer 声明同步到 rc.5。
+- CI cohort 与开发依赖升到 `0.2.2-rc.5`、Node 24（该版本 engines 要求 Node >= 24.9）；peer 范围保持 `~0.2.2-rc.1`，rc.1–rc.5 的宿主都能满足。
 - 安装文档补充 npm 同名旧包 `dsh-session-import@0.1.1` 的启动故障根因与 profile 恢复步骤（issue #7）。
 
 ## 2.2.0 — 2026-11-10
