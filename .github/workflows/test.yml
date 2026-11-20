@@ -9,8 +9,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24]
-        dsh: ['0.2.2-rc.1']
+        # DSH 0.2.2-rc.5 起 engines 要求 Node >= 24.9，cohort 只跑官方支持的 Node。
+        node: [24]
+        dsh: ['0.2.2-rc.5']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

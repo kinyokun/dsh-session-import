@@ -1,21 +1,10 @@
 // Pin the complete official SDK peer graph to one release; caret peers otherwise mix RCs.
 import { spawnSync } from 'node:child_process';
+import { collectCohort } from './cohort.js';
+
 const version = process.env.DSH_VERSION;
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version ?? '')) throw new Error('Set DSH_VERSION to a released @deepseek-ai/dsh version');
-const packages = new Set(['@deepseek-ai/dsh']);
-const pending = [...packages];
-while (pending.length) {
-  const batch = pending.splice(0, 8);
-  const manifests = await Promise.all(batch.map(async name => {
-    const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/${version}`, { signal: AbortSignal.timeout(60000) });
-    if (!response.ok) throw new Error(`Cannot resolve ${name}@${version}: HTTP ${response.status}`);
-    return response.json();
-  }));
-  for (const manifest of manifests) for (const name of Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies, ...manifest.peerDependencies })) {
-    if (!name.startsWith('@deepseek-ai/dsh-') || packages.has(name)) continue;
-    packages.add(name); pending.push(name);
-  }
-}
-console.log(`Installing ${packages.size} official packages at ${version}`);
-const result = spawnSync('npm', ['install', '--no-save', '--no-package-lock', '--no-audit', '--no-fund', ...[...packages].map(name => `${name}@${version}`)], { stdio: 'inherit', shell: process.platform === 'win32' });
+const { selected, skipped } = await collectCohort(version);
+if (skipped.length) console.log(`Skipping ${skipped.length} package(s) not available on ${process.platform}/${process.arch}: ${skipped.join(', ')}`);
+console.log(`Installing ${selected.length} official packages at ${version}`);
+const result = spawnSync('npm', ['install', '--no-save', '--no-package-lock', '--no-audit', '--no-fund', ...selected.map(name => `${name}@${version}`)], { stdio: 'inherit', shell: process.platform === 'win32' });
 process.exit(result.status ?? 1);
